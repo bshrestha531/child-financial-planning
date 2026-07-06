@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const repoName = process.env.GITHUB_REPOSITORY?.split("/")[1] || "child-financial-planning";
+
 export default defineConfig({
   plugins: [react()],
-  base: "./", // relative paths so it works at https://<user>.github.io/<repo>/
+  base: process.env.GITHUB_ACTIONS ? `/${repoName}/` : "/",
 });
