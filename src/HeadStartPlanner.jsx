@@ -1,0 +1,382 @@
+import { useState, useRef } from "react";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+} from "recharts";
+
+const FONT_CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+input[type=range]{-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#DCE5DE;outline:none;width:100%}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:#10382B;cursor:pointer;border:3px solid #fff;box-shadow:0 1px 4px rgba(16,56,43,.35)}
+input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid #1D9E75;outline-offset:2px}
+`;
+
+const C = {
+  ink: "#10382B", paper: "#F3F6F2", line: "#DCE5DE", muted: "#5C6B62",
+  roth: "#1D9E75", k401: "#378ADD", personal: "#BA7517", plan529: "#7F77DD",
+};
+
+const fmt = (n) =>
+  n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString()}`;
+
+const numInput = {
+  width: "100%", padding: "6px 8px", border: `1px solid ${C.line}`, borderRadius: 8,
+  fontFamily: "IBM Plex Mono", fontSize: 13, background: "#fff", boxSizing: "border-box",
+};
+
+function Slider({ label, value, min, max, step, onChange, format }) {
+  return (
+    <label style={{ display: "block", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: C.muted, fontFamily: "Inter" }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, fontFamily: "IBM Plex Mono", color: C.ink }}>{format(value)}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+}
+
+function CardShell({ color, name, note, children }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${C.line}`, padding: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <span style={{ width: 10, height: 10, borderRadius: 3, background: color, display: "inline-block" }} />
+        <h3 style={{ margin: 0, fontFamily: "Archivo", fontWeight: 700, fontSize: 17, color: C.ink }}>{name}</h3>
+      </div>
+      <p style={{ margin: "0 0 16px 20px", fontSize: 12, color: C.muted, fontFamily: "Inter" }}>{note}</p>
+      {children}
+    </div>
+  );
+}
+
+// ---- Schedule card: fixed age 1-18 grid (529 & Personal) ----
+function ScheduleCard({ account, color, name, note, cfg, onChange, childAge, onDirty }) {
+  const [extraAges, setExtraAges] = useState([]);
+  const ages = Array.from({ length: 18 }, (_, i) => i + 1);
+  extraAges.forEach((a) => { if (!ages.includes(a)) ages.push(a); });
+  ages.sort((x, y) => x - y);
+
+  const addLater = () => {
+    const used = new Set(ages);
+    for (let a = 19; a <= 65; a++) {
+      if (!used.has(a)) { setExtraAges([...extraAges, a]); onDirty(); return; }
+    }
+  };
+
+  return (
+    <CardShell color={color} name={name} note={note}>
+      <Slider label="Starting balance (today)" value={cfg.start} min={0} max={100000} step={500}
+        onChange={(v) => onChange({ ...cfg, start: v })} format={(v) => `$${v.toLocaleString()}`} />
+      <Slider label="Default rate of return" value={cfg.rate} min={0} max={12} step={0.5}
+        onChange={(v) => onChange({ ...cfg, rate: v })} format={(v) => `${v.toFixed(1)}%`} />
+
+      <div style={{ display: "grid", gridTemplateColumns: "52px 1fr 86px", gap: 8, fontSize: 11, color: C.muted, fontFamily: "Inter", marginBottom: 4, paddingLeft: 2 }}>
+        <span>Age</span><span>Contribution that year $</span><span>Return %</span>
+      </div>
+      <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
+        {ages.map((age) => {
+          const past = age < childAge;
+          return (
+            <div key={age} style={{ display: "grid", gridTemplateColumns: "52px 1fr 86px", gap: 8, alignItems: "center", marginBottom: 6, opacity: past ? 0.35 : 1 }}>
+              <span style={{ fontFamily: "IBM Plex Mono", fontSize: 13, color: C.ink, paddingLeft: 2 }}>{age}</span>
+              <input type="number" min="0" inputMode="numeric" placeholder={past ? "past" : "0"} disabled={past}
+                defaultValue={cfg.sched[age]?.c ?? ""} data-account={account} data-age={age} data-field="c"
+                style={{ ...numInput, background: past ? C.paper : "#fff" }} aria-label={`Contribution at age ${age}`} />
+              <input type="number" min="0" max="20" step="0.5" inputMode="decimal" placeholder={past ? "" : String(cfg.rate)} disabled={past}
+                defaultValue={cfg.sched[age]?.r ?? ""} data-account={account} data-age={age} data-field="r"
+                style={{ ...numInput, background: past ? C.paper : "#fff" }} aria-label={`Return at age ${age}`} />
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={addLater}
+        style={{ marginTop: 8, background: C.paper, border: `1px dashed ${color}`, color, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "Inter" }}>
+        + Add a year after 18
+      </button>
+      <p style={{ margin: "6px 0 0", fontSize: 11, color: C.muted, fontFamily: "Inter" }}>
+        Years before the child's current age are grayed out. Blank = $0 / default rate.
+      </p>
+    </CardShell>
+  );
+}
+
+// ---- Slider card: window + per-year override rows (Roth & 401k) ----
+function SliderCard({ account, color, name, note, cfg, onChange, fromMin, toMax, maxContrib, childAge, onDirty }) {
+  const [ovAges, setOvAges] = useState([]);
+  const lowest = Math.max(childAge, fromMin);
+
+  const addRow = () => {
+    const used = new Set(ovAges);
+    for (let a = lowest; a <= toMax; a++) {
+      if (!used.has(a)) { setOvAges([...ovAges, a].sort((x, y) => x - y)); onDirty(); return; }
+    }
+  };
+  const removeRow = (age) => { setOvAges(ovAges.filter((a) => a !== age)); onDirty(); };
+
+  return (
+    <CardShell color={color} name={name} note={note}>
+      <Slider label="Starting balance (today)" value={cfg.start} min={0} max={100000} step={500}
+        onChange={(v) => onChange({ ...cfg, start: v })} format={(v) => `$${v.toLocaleString()}`} />
+      <Slider label="Yearly contribution" value={cfg.contrib} min={0} max={maxContrib} step={250}
+        onChange={(v) => onChange({ ...cfg, contrib: v })} format={(v) => `$${v.toLocaleString()}`} />
+      <Slider label="Rate of return" value={cfg.rate} min={0} max={12} step={0.5}
+        onChange={(v) => onChange({ ...cfg, rate: v })} format={(v) => `${v.toFixed(1)}%`} />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Slider label="Contribute from age" value={cfg.from} min={fromMin} max={toMax} step={1}
+          onChange={(v) => onChange({ ...cfg, from: Math.min(v, cfg.to) })} format={(v) => `${v}`} />
+        <Slider label="Until age" value={cfg.to} min={fromMin} max={toMax} step={1}
+          onChange={(v) => onChange({ ...cfg, to: Math.max(v, cfg.from) })} format={(v) => `${v}`} />
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color, fontFamily: "Inter", marginBottom: 6 }}>
+        Override specific years
+      </div>
+      {ovAges.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "52px 1fr 86px 24px", gap: 8, fontSize: 11, color: C.muted, fontFamily: "Inter", marginBottom: 4, paddingLeft: 2 }}>
+          <span>Age</span><span>Contribution $</span><span>Return %</span><span />
+        </div>
+      )}
+      {ovAges.map((age) => {
+        const defaultContrib = age >= cfg.from && age <= cfg.to ? cfg.contrib : 0;
+        return (
+          <div key={age} style={{ display: "grid", gridTemplateColumns: "52px 1fr 86px 24px", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontFamily: "IBM Plex Mono", fontSize: 13, color: C.ink, paddingLeft: 2 }}>{age}</span>
+            <input type="number" min="0" inputMode="numeric" placeholder={defaultContrib.toLocaleString()}
+              defaultValue={cfg.sched[age]?.c ?? ""} data-account={account} data-age={age} data-field="c"
+              style={numInput} aria-label={`Contribution override at age ${age}`} />
+            <input type="number" min="0" max="20" step="0.5" inputMode="decimal" placeholder={String(cfg.rate)}
+              defaultValue={cfg.sched[age]?.r ?? ""} data-account={account} data-age={age} data-field="r"
+              style={numInput} aria-label={`Return override at age ${age}`} />
+            <button onClick={() => removeRow(age)} aria-label={`Remove age ${age}`}
+              style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+          </div>
+        );
+      })}
+      <button onClick={addRow}
+        style={{ background: C.paper, border: `1px dashed ${color}`, color, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "Inter" }}>
+        + Add a year
+      </button>
+    </CardShell>
+  );
+}
+
+export default function HeadStartPlanner() {
+  const [childAge, setChildAge] = useState(11);
+  const [targetAge, setTargetAge] = useState(25);
+  const [rolloverOn, setRolloverOn] = useState(true);
+  const [openedAtAge, setOpenedAtAge] = useState(0);
+  const [dirty, setDirty] = useState(false);
+  const gridsRef = useRef(null);
+
+  const [personal, setPersonal] = useState({
+    start: 25000, rate: 7,
+    sched: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [11 + i, { c: 2000 }])),
+  });
+  const [plan529, setPlan529] = useState({ start: 10000, rate: 6, sched: { 11: { c: 20000 } } });
+  const [roth, setRoth] = useState({ start: 0, contrib: 7500, rate: 8, from: 14, to: 15, sched: {} });
+  const [k401, setK401] = useState({ start: 0, contrib: 10000, rate: 8, from: 22, to: 59, sched: {} });
+
+  const setters = { personal: setPersonal, plan529: setPlan529, roth: setRoth, k401: setK401 };
+
+  const markDirty = (e) => {
+    if (!e || e.target?.dataset?.account) setDirty(true);
+  };
+
+  const applyAll = () => {
+    const scheds = { personal: {}, plan529: {}, roth: {}, k401: {} };
+    gridsRef.current.querySelectorAll("input[data-account]").forEach((el) => {
+      if (el.disabled || el.value === "") return;
+      const v = Number(el.value);
+      if (Number.isNaN(v) || v < 0) return;
+      const { account, age, field } = el.dataset;
+      const a = Number(age);
+      scheds[account][a] = { ...(scheds[account][a] || {}), [field]: v };
+    });
+    Object.entries(scheds).forEach(([id, sched]) => setters[id]((prev) => ({ ...prev, sched })));
+    setDirty(false);
+  };
+
+  const eligibleAge = openedAtAge + 15;
+  const IRA_LIMIT = 7500;
+  const END = 65;
+
+  let bP = personal.start + (personal.sched[childAge]?.c ?? 0);
+  let b5 = plan529.start + (plan529.sched[childAge]?.c ?? 0);
+  let bR = roth.start + Math.min(roth.sched[childAge]?.c ?? 0, IRA_LIMIT);
+  let bK = k401.start + (k401.sched[childAge]?.c ?? 0);
+  let rolled = 0;
+  let iP = bP, i5 = b5, iR = bR, iK = bK;
+  const rows = [{ age: childAge, personal: bP, plan529: b5, roth: bR, k401: bK, total: bP + b5 + bR + bK, iP, i5, iR, iK }];
+  for (let age = childAge + 1; age <= END; age++) {
+    let roll = 0;
+    if (rolloverOn && age >= eligibleAge && rolled < 35000 && b5 > 0) {
+      roll = Math.min(IRA_LIMIT, 35000 - rolled, b5);
+      b5 -= roll; bR += roll; rolled += roll;
+    }
+    const sP = personal.sched[age] || {};
+    bP = (bP + (sP.c ?? 0)) * (1 + (sP.r ?? personal.rate) / 100);
+
+    const s5 = plan529.sched[age] || {};
+    b5 = (b5 + (s5.c ?? 0)) * (1 + (s5.r ?? plan529.rate) / 100);
+
+    const oR = roth.sched[age] || {};
+    let cR = oR.c ?? (age >= roth.from && age <= roth.to ? roth.contrib : 0);
+    cR = Math.min(cR, Math.max(0, IRA_LIMIT - roll));
+    bR = (bR + cR) * (1 + (oR.r ?? roth.rate) / 100);
+
+    const oK = k401.sched[age] || {};
+    const cK = oK.c ?? (age >= k401.from && age <= k401.to ? k401.contrib : 0);
+    bK = (bK + cK) * (1 + (oK.r ?? k401.rate) / 100);
+
+    iP += sP.c ?? 0;
+    i5 += s5.c ?? 0;
+    iR += cR + roll;
+    iK += cK;
+
+    rows.push({ age, personal: bP, plan529: b5, roth: bR, k401: bK, total: bP + b5 + bR + bK, iP, i5, iR, iK });
+  }
+
+  const atTarget = rows.find((r) => r.age === targetAge) || rows[rows.length - 1];
+  const at65 = rows[rows.length - 1];
+
+  const stats = [
+    { label: "Roth IRA", value: atTarget.roth, invested: atTarget.iR, color: C.roth },
+    { label: "401(k)", value: atTarget.k401, invested: atTarget.iK, color: C.k401 },
+    { label: "Personal investing", value: atTarget.personal, invested: atTarget.iP, color: C.personal },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.paper, fontFamily: "Inter, sans-serif", color: C.ink }}>
+      <style>{FONT_CSS}</style>
+      <div style={{ maxWidth: 1060, margin: "0 auto", padding: "36px 20px 96px" }}>
+
+        <header style={{ marginBottom: 28 }}>
+          <p style={{ margin: 0, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", color: C.roth, fontWeight: 600 }}>
+            The head start planner
+          </p>
+          <h1 style={{ margin: "6px 0 8px", fontFamily: "Archivo", fontWeight: 800, fontSize: "clamp(26px, 4vw, 40px)", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+            Stop worrying about generational wealth. Start it early instead.
+          </h1>
+          <p style={{ margin: 0, maxWidth: 620, fontSize: 14, color: C.muted, lineHeight: 1.6 }}>
+            You don't need to be rich — you need a head start. Money invested while your kid is young
+            has decades to grow, and that quietly does most of the work for you. Play with the numbers
+            and see it for yourself. (Educational tool, not financial advice.)
+          </p>
+        </header>
+
+        <div style={{ background: C.ink, borderRadius: 20, padding: "24px 24px 20px", marginBottom: 24 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
+            <span style={{ color: "#BFD4C8", fontSize: 13, fontWeight: 500 }}>
+              What your kid has at age <span style={{ fontFamily: "IBM Plex Mono", color: "#fff", fontWeight: 600 }}>{targetAge}</span>
+            </span>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ color: "#BFD4C8", fontSize: 13, marginBottom: 4 }}>
+                Total at {targetAge}: <span style={{ fontFamily: "IBM Plex Mono", color: "#fff", fontWeight: 600, fontSize: 17 }}>{fmt(atTarget.total)}</span>
+              </div>
+              <div style={{ color: "#BFD4C8", fontSize: 13 }}>
+                Total at 65: <span style={{ fontFamily: "IBM Plex Mono", color: "#fff", fontWeight: 600, fontSize: 17 }}>{fmt(at65.total)}</span>
+              </div>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+            {stats.map((s) => {
+              const mult = s.invested > 0 ? s.value / s.invested : null;
+              return (
+                <div key={s.label} style={{ borderLeft: `3px solid ${s.color}`, paddingLeft: 14 }}>
+                  <div style={{ fontSize: 12, color: "#BFD4C8", marginBottom: 4 }}>{s.label}</div>
+                  <div style={{ fontFamily: "IBM Plex Mono", fontWeight: 600, fontSize: "clamp(22px, 3vw, 32px)", color: "#fff" }}>
+                    {fmt(s.value)}
+                  </div>
+                  <div style={{ fontFamily: "IBM Plex Mono", fontSize: 12, color: "#7FA491", marginTop: 4 }}>
+                    put in {fmt(s.invested)}{mult ? ` · ${mult.toFixed(1)}× growth` : ""}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 18 }}>
+            <input type="range" min={childAge + 1} max={65} step={1} value={targetAge}
+              onChange={(e) => setTargetAge(Number(e.target.value))}
+              style={{ background: "#2C4A3D" }} aria-label="Target age for breakdown" />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#7FA491", fontFamily: "IBM Plex Mono", marginTop: 4 }}>
+              <span>{childAge + 1}</span><span>Drag to change target age</span><span>65</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${C.line}`, padding: "18px 12px 6px", marginBottom: 24 }}>
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={rows} margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
+              <XAxis dataKey="age" tick={{ fontSize: 11, fontFamily: "IBM Plex Mono", fill: C.muted }} tickLine={false} axisLine={{ stroke: C.line }} />
+              <YAxis tickFormatter={(v) => (v >= 1e6 ? `${v / 1e6}M` : `${v / 1000}k`)} tick={{ fontSize: 11, fontFamily: "IBM Plex Mono", fill: C.muted }} tickLine={false} axisLine={false} width={44} />
+              <Tooltip
+                formatter={(v, name) => [fmt(v), { personal: "Personal", plan529: "529", roth: "Roth IRA", k401: "401(k)" }[name]]}
+                labelFormatter={(a) => `Age ${a}`}
+                contentStyle={{ fontFamily: "Inter", fontSize: 12, borderRadius: 10, border: `1px solid ${C.line}` }}
+              />
+              <ReferenceLine x={targetAge} stroke={C.ink} strokeDasharray="4 4" />
+              {rolloverOn && eligibleAge <= END && <ReferenceLine x={Math.max(eligibleAge, childAge)} stroke={C.plan529} strokeDasharray="2 4" />}
+              <Area type="monotone" dataKey="roth" stackId="1" stroke={C.roth} fill={C.roth} fillOpacity={0.55} isAnimationActive={false} />
+              <Area type="monotone" dataKey="k401" stackId="1" stroke={C.k401} fill={C.k401} fillOpacity={0.5} isAnimationActive={false} />
+              <Area type="monotone" dataKey="personal" stackId="1" stroke={C.personal} fill={C.personal} fillOpacity={0.5} isAnimationActive={false} />
+              <Area type="monotone" dataKey="plan529" stackId="1" stroke={C.plan529} fill={C.plan529} fillOpacity={0.5} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${C.line}`, padding: 20, marginBottom: 24, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "0 24px" }}>
+          <Slider label="Child's current age" value={childAge} min={1} max={20} step={1}
+            onChange={(v) => { setChildAge(v); if (targetAge <= v) setTargetAge(v + 1); }} format={(v) => `${v}`} />
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: "pointer" }}>
+              <input type="checkbox" checked={rolloverOn} onChange={(e) => setRolloverOn(e.target.checked)} style={{ width: 16, height: 16, accentColor: C.ink }} />
+              <span style={{ fontSize: 13, fontWeight: 500 }}>529 → Roth rollover ($35k lifetime, $7.5k/yr)</span>
+            </label>
+            {rolloverOn && (
+              <>
+                <Slider label="Child's age when the 529 was opened" value={openedAtAge} min={0} max={Math.max(childAge, 1)} step={1}
+                  onChange={setOpenedAtAge} format={(v) => (v === 0 ? "At birth" : `${v}`)} />
+                <p style={{ margin: "-6px 0 10px", fontSize: 12, color: C.plan529, fontWeight: 600, fontFamily: "Inter" }}>
+                  15-year rule: rollovers eligible starting at age {eligibleAge}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div ref={gridsRef} onInput={markDirty}
+          style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
+          <ScheduleCard account="plan529" color={C.plan529} name="529 plan" note="For school — and leftover money can feed the Roth later"
+            cfg={plan529} onChange={setPlan529} childAge={childAge} onDirty={() => setDirty(true)} />
+          <ScheduleCard account="personal" color={C.personal} name="Personal investing" note="A regular investment account in the kid's corner"
+            cfg={personal} onChange={setPersonal} childAge={childAge} onDirty={() => setDirty(true)} />
+          <SliderCard account="roth" color={C.roth} name="Roth IRA" note="They need a job for this one — even a summer job counts"
+            cfg={roth} onChange={setRoth} fromMin={5} toMax={59} maxContrib={7500} childAge={childAge} onDirty={() => setDirty(true)} />
+          <SliderCard account="k401" color={C.k401} name="401(k)" note="Kicks in once they start their career"
+            cfg={k401} onChange={setK401} fromMin={16} toMax={59} maxContrib={24500} childAge={childAge} onDirty={() => setDirty(true)} />
+        </div>
+
+        <p style={{ marginTop: 28, fontSize: 11.5, color: C.muted, lineHeight: 1.6, maxWidth: 720 }}>
+          The fine print: 529-to-Roth rollovers only work once the 529 has been open 15 years (set the opening
+          age above), max $35k lifetime and about $7,500 a year — and that yearly cap is shared with regular
+          Roth contributions. A couple of things this tool doesn't check: money added to the 529 in the last
+          5 years can't roll over yet, and the kid needs actual wages in any rollover year. Limits change
+          every year, so double-check before moving real money.
+        </p>
+      </div>
+
+      <div style={{ position: "fixed", bottom: 20, left: 0, right: 0, display: "flex", justifyContent: "center", pointerEvents: "none", zIndex: 10 }}>
+        <button onClick={applyAll}
+          style={{
+            pointerEvents: "auto", padding: "12px 28px", borderRadius: 999, cursor: "pointer",
+            fontFamily: "Inter", fontSize: 14, fontWeight: 600,
+            background: dirty ? C.ink : "#fff",
+            color: dirty ? "#fff" : C.muted,
+            border: dirty ? `1px solid ${C.ink}` : `1px solid ${C.line}`,
+            boxShadow: "0 4px 16px rgba(16,56,43,.18)",
+          }}>
+          {dirty ? "Update projections" : "Projections up to date"}
+        </button>
+      </div>
+    </div>
+  );
+}
